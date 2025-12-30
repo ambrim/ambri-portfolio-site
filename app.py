@@ -1,3 +1,4 @@
+import asyncio
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from datetime import datetime
 import json
@@ -59,6 +60,9 @@ def handle_chat_stream():
             error_container = {}
             
             def run_agent():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
                 try:
                     result = portfolio_agent(
                         f"User chat request: {user_action}",
@@ -66,9 +70,12 @@ def handle_chat_stream():
                     )
                     result_container['result'] = result
                 except Exception as e:
+                    import traceback
+                    traceback.print_exc()
                     error_container['error'] = e
                 finally:
                     progress_queue.put({"type": "done"})
+                    loop.close()
             
             agent_thread = threading.Thread(target=run_agent)
             agent_thread.start()
@@ -119,6 +126,8 @@ def handle_chat_stream():
             
         except Exception as e:
             print(f"Error in stream: {e}")
+            import traceback
+            traceback.print_exc()
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
         finally:
             set_progress_callback(None)
