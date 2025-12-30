@@ -1,3 +1,6 @@
+import nest_asyncio
+nest_asyncio.apply()
+
 import asyncio
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from datetime import datetime
