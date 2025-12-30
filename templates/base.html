@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>{% block title %}Ambri's Portfolio{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/layout.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/variants.css') }}">
+</head>
+
+<body>
+  <div id="app-shell">
+
+    <!-- LEFT COLUMN -->
+    <div id="left-column">
+
+      <!-- Dynamic UI -->
+      <section id="left-main">
+        {% block left_main %}
+        <!-- Agent-driven content -->
+        {% endblock %}
+      </section>
+
+      <!-- Static bottom content -->
+      <section id="left-footer">
+        {% block left_footer %}
+        <div class="left-footer-content">
+          <p>© {{ current_year }} Ambri Ma</p>
+          <p>Flask + Strands Portfolio</p>
+        </div>
+        {% endblock %}
+      </section>
+
+    </div>
+
+    <!-- RIGHT COLUMN (CHAT) -->
+    <aside id="chat-column">
+      {% block chat %}
+      <div id="chat-header">
+        <h3>Ask about my work</h3>
+      </div>
+
+      <div id="chat-messages"></div>
+
+      <form id="chat-form">
+        <input type="text" id="chat-input" placeholder="Ask a question…" autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+      {% endblock %}
+    </aside>
+
+  </div>
+
+  <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</body>
+
+</html>
