@@ -1,35 +1,19 @@
-from datetime import datetime
-from agents.orchestrator.orchestrator_agent import PortfolioAgentResult, create_orchestrator_agent
-from flask import Flask, render_template, request, jsonify
-import os
-from utils.chat_message_store import chat_store
-from utils.html_cache import html_cache
-from markupsafe import Markup
-
-
-app = Flask(__name__)
-portfolio_agent=create_orchestrator_agent()
-
-
-@app.route("/")
-def index():
-    return render_template(
-        "index.html",
-        current_year=datetime.now().year
-    )
-
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from datetime import datetime
 import json
+import queue
+import threading
+import os
+from markupsafe import Markup
+
 from agents.orchestrator.orchestrator_agent import PortfolioAgentResult, create_orchestrator_agent
+from agents.orchestrator.tools.orchestrator_tools import set_progress_callback
 from utils.chat_message_store import chat_store
 from utils.html_cache import html_cache
-from markupsafe import Markup
 
 app = Flask(__name__)
 portfolio_agent = create_orchestrator_agent()
 
-# Global dict to track progress (in-memory, no external store needed)
 progress_updates = {}
 
 @app.route("/")
@@ -38,17 +22,6 @@ def index():
         "index.html",
         current_year=datetime.now().year
     )
-
-from flask import Flask, render_template, request, jsonify, Response
-from datetime import datetime
-import json
-import queue
-import threading
-from agents.orchestrator.orchestrator_agent import PortfolioAgentResult, create_orchestrator_agent
-from agents.orchestrator.tools.orchestrator_tools import set_progress_callback
-from utils.chat_message_store import chat_store
-from utils.html_cache import html_cache
-from markupsafe import Markup
 
 app = Flask(__name__)
 portfolio_agent = create_orchestrator_agent()
@@ -65,16 +38,15 @@ def handle_chat_stream():
     """Streaming endpoint that sends progress updates"""
     user_action = request.json.get("instruction", "")
     
-    # Create a queue for progress messages
     progress_queue = queue.Queue()
     
     def progress_callback(message: str):
         """Callback function that puts messages in the queue"""
         progress_queue.put({"type": "progress", "message": message})
     
-    # Set the callback before calling the agent
     set_progress_callback(progress_callback)
     
+    @stream_with_context
     def generate():
         try:
             yield f"data: {json.dumps({'status': 'started', 'message': 'Processing request...'})}\n\n"
@@ -104,14 +76,13 @@ def handle_chat_stream():
             while True:
                 try:
                     msg = progress_queue.get(timeout=0.1)
-                    
                     if msg["type"] == "done":
                         break
                     elif msg["type"] == "progress":
                         yield f"data: {json.dumps({'status': 'progress', 'message': msg['message']})}\n\n"
                 
                 except queue.Empty:
-                    continue
+                    yield ": heartbeat\n\n" 
             
             agent_thread.join()
             
