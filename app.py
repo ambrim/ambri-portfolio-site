@@ -18,8 +18,6 @@ from utils.html_cache import HTMLCache
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
-portfolio_agent = create_orchestrator_agent()
-
 def get_session_id():
     """Get or create session ID"""
     if 'session_id' not in session:
@@ -31,7 +29,6 @@ def get_chat_store():
     session_id = get_session_id()
     store = ChatStore(session_id)
     
-    # Add welcome message if this is a new session
     if len(store) == 0:
         store.add(
             "agent",
@@ -47,7 +44,6 @@ def get_html_cache():
     session_id = get_session_id()
     cache = HTMLCache(session_id)
     
-    # Add welcome page if this is a new session
     if len(cache) == 0:
         cache.add("Quick Guide", WELCOME_HTML)
     
@@ -55,7 +51,6 @@ def get_html_cache():
 
 @app.route("/")
 def index():
-    # Initialize session
     get_session_id()
     
     return render_template(
@@ -77,7 +72,6 @@ def handle_chat_stream():
         progress_queue.put({"type": "progress", "message": message})
     
     set_progress_callback(progress_callback)
-
     set_orchestrator_html_cache(html_cache)
     
     @stream_with_context
@@ -98,6 +92,8 @@ def handle_chat_stream():
                 asyncio.set_event_loop(loop)
                 
                 try:
+                    portfolio_agent = create_orchestrator_agent()
+                    
                     result = portfolio_agent(
                         f"User chat request: {user_action}",
                         structured_output_model=PortfolioAgentResult

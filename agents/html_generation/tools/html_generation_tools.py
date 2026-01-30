@@ -1,14 +1,13 @@
 from lxml import html as lxml_html
 import json
 from strands import tool
+import threading
 
-# Global reference to current HTML cache (set per request)
-_current_html_cache = None
+_thread_local = threading.local()
 
 def set_html_cache(cache):
-    """Set the HTML cache for the current request"""
-    global _current_html_cache
-    _current_html_cache = cache
+    """Set the HTML cache for the current thread"""
+    _thread_local.html_cache = cache
 
 @tool
 def validate_html(html: str) -> str:
@@ -35,15 +34,15 @@ def get_previous_html() -> str:
     """
     Gets the most recently generated HTML from the HTML cache.
     """
-    global _current_html_cache
+    html_cache = getattr(_thread_local, 'html_cache', None)
     
-    if _current_html_cache is None:
+    if html_cache is None:
         return json.dumps({
             "success": False,
             "error_message": "HTML cache not available. Generate brand new HTML instead."
         })
     
-    latest = _current_html_cache.latest()
+    latest = html_cache.latest()
     if latest:
         return json.dumps({
             "success": True,

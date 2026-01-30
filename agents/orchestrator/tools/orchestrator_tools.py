@@ -3,18 +3,17 @@ from agents.html_generation.tools.html_generation_tools import set_html_cache
 import json
 from strands import tool
 from utils.aws_config import kb_client_singleton
+import threading
 
-_progress_callback = None
-_current_html_cache = None
+_thread_local = threading.local()
 
 def set_progress_callback(callback):
-    global _progress_callback
-    _progress_callback = callback
+    """Set the progress callback for the current thread"""
+    _thread_local.progress_callback = callback
 
 def set_orchestrator_html_cache(cache):
-    """Set the HTML cache for the current orchestrator request"""
-    global _current_html_cache
-    _current_html_cache = cache
+    """Set the HTML cache for the current thread"""
+    _thread_local.html_cache = cache
 
 @tool
 def generate_html_from_request(
@@ -26,11 +25,13 @@ def generate_html_from_request(
     Generate HTML based on user instruction, optional KB context,
     and optional refinement of previous HTML.
     """
-    global _progress_callback, _current_html_cache
-    
     def send_progress(message: str):
-        if _progress_callback:
-            _progress_callback(message)
+        callback = getattr(_thread_local, 'progress_callback', None)
+        if callback:
+            callback(message)
+    
+    def get_html_cache():
+        return getattr(_thread_local, 'html_cache', None)
     
     send_progress("Starting HTML generation...")
     
@@ -44,8 +45,9 @@ def generate_html_from_request(
     html_generation_agent = create_html_generation_agent()
     
     # Set the HTML cache for the HTML generation tools
-    if _current_html_cache:
-        set_html_cache(_current_html_cache)
+    html_cache = get_html_cache()
+    if html_cache:
+        set_html_cache(html_cache)
     
     # ----------------------------
     # Retrieve KB context if needed
@@ -71,9 +73,9 @@ def generate_html_from_request(
     
     if refine_previous:
         send_progress("Loading previous HTML...")
-        # Use the session-specific cache
-        if _current_html_cache:
-            previous_entry = _current_html_cache.latest()
+        html_cache = get_html_cache()
+        if html_cache:
+            previous_entry = html_cache.latest()
             if previous_entry:
                 prompt_sections.append(
                     "PREVIOUS HTML:\n"
