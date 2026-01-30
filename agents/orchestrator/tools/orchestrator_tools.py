@@ -1,14 +1,20 @@
 from agents.html_generation.html_generation_agent import HTMLGenerationResult, create_html_generation_agent
+from agents.html_generation.tools.html_generation_tools import set_html_cache
 import json
 from strands import tool
 from utils.aws_config import kb_client_singleton
-from utils.html_cache import html_cache
 
 _progress_callback = None
+_current_html_cache = None
 
 def set_progress_callback(callback):
     global _progress_callback
     _progress_callback = callback
+
+def set_orchestrator_html_cache(cache):
+    """Set the HTML cache for the current orchestrator request"""
+    global _current_html_cache
+    _current_html_cache = cache
 
 @tool
 def generate_html_from_request(
@@ -20,7 +26,7 @@ def generate_html_from_request(
     Generate HTML based on user instruction, optional KB context,
     and optional refinement of previous HTML.
     """
-    global _progress_callback
+    global _progress_callback, _current_html_cache
     
     def send_progress(message: str):
         if _progress_callback:
@@ -36,6 +42,10 @@ def generate_html_from_request(
     )
     
     html_generation_agent = create_html_generation_agent()
+    
+    # Set the HTML cache for the HTML generation tools
+    if _current_html_cache:
+        set_html_cache(_current_html_cache)
     
     # ----------------------------
     # Retrieve KB context if needed
@@ -61,12 +71,14 @@ def generate_html_from_request(
     
     if refine_previous:
         send_progress("Loading previous HTML...")
-        previous_entry = html_cache.latest()
-        if previous_entry:
-            prompt_sections.append(
-                "PREVIOUS HTML:\n"
-                f"{previous_entry.html}"
-            )
+        # Use the session-specific cache
+        if _current_html_cache:
+            previous_entry = _current_html_cache.latest()
+            if previous_entry:
+                prompt_sections.append(
+                    "PREVIOUS HTML:\n"
+                    f"{previous_entry.html}"
+                )
         
         prompt_sections.append(
             "INSTRUCTION:\n"

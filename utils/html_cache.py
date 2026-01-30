@@ -1,10 +1,12 @@
-from collections import Counter, deque
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
 import os
 import re
 from typing import List, Optional
+import json
+from clients.redis_client import redis_client
 
 
 @dataclass
@@ -12,11 +14,29 @@ class HTMLCacheEntry:
     query: str
     html: str
     timestamp: str
+    
+    def to_dict(self):
+        return {
+            "query": self.query,
+            "html": self.html,
+            "timestamp": self.timestamp
+        }
+    
+    @staticmethod
+    def from_dict(data):
+        return HTMLCacheEntry(
+            query=data["query"],
+            html=data["html"],
+            timestamp=data["timestamp"]
+        )
 
 
 class HTMLCache:
-    def __init__(self, max_size: int = 10):
-        self._cache: deque[HTMLCacheEntry] = deque(maxlen=max_size)
+    def __init__(self, session_id: str, max_size: int = 10):
+        self.session_id = session_id
+        self.max_size = max_size
+        self.key = f"html_cache:{session_id}"
+        self.ttl = 86400  # 24 hours
     
     def _tokenize(self, text: str) -> List[str]:
         text = re.sub(r'[^\w\s]', '', text.lower())
@@ -55,7 +75,9 @@ class HTMLCache:
         return len(intersection) / len(union)
     
     def find_similar_query(self, new_query: str, threshold: float = 0.8) -> Optional[HTMLCacheEntry]:
-        if not self._cache:
+        all_entries = self.all()
+        
+        if not all_entries:
             return None
         
         new_tokens = self._tokenize(new_query)
@@ -63,13 +85,13 @@ class HTMLCache:
         best_score = -1
         best_entry = None
         
-        for entry in self._cache:
+        for entry in all_entries:
             old_tokens = self._tokenize(entry.query)
             
             cosine_sim = self._cosine_similarity(new_tokens, old_tokens)
             jaccard_sim = self._jaccard_similarity(new_tokens, old_tokens)
             combined_score = 0.7 * cosine_sim + 0.3 * jaccard_sim
-            print(combined_score)
+            print(f"Similarity score: {combined_score}")
             
             if combined_score > threshold and combined_score > best_score:
                 best_score = combined_score
@@ -83,41 +105,56 @@ class HTMLCache:
             html=html,
             timestamp=datetime.now(timezone.utc).isoformat()
         )
-        self._cache.appendleft(entry)
+        
+        # Add to Redis list (newest first)
+        redis_client.lpush(self.key, json.dumps(entry.to_dict()))
+        
+        # Trim to max size
+        redis_client.ltrim(self.key, 0, self.max_size - 1)
+        
+        # Reset expiration
+        redis_client.expire(self.key, self.ttl)
     
     def all(self) -> List[HTMLCacheEntry]:
-        return list(self._cache)
+        """Get all entries as HTMLCacheEntry objects"""
+        entries_json = redis_client.lrange(self.key, 0, -1)
+        return [HTMLCacheEntry.from_dict(json.loads(e)) for e in entries_json]
     
     def get(self, index: int) -> Optional[HTMLCacheEntry]:
-        if 0 <= index < len(self._cache):
-            return self._cache[index]
+        """Get entry by index (0 = most recent)"""
+        entry_json = redis_client.lindex(self.key, index)
+        if entry_json:
+            return HTMLCacheEntry.from_dict(json.loads(entry_json))
         return None
     
     def latest(self) -> Optional[HTMLCacheEntry]:
-        return self._cache[0] if self._cache else None
+        """Get most recent entry"""
+        return self.get(0)
     
     def promote(self, entry: HTMLCacheEntry) -> None:
+        """Move entry to the front of the cache"""
         try:
-            self._cache.remove(entry)
-        except ValueError:
-            return
-        self._cache.appendleft(entry)
+            # Remove the entry
+            redis_client.lrem(self.key, 1, json.dumps(entry.to_dict()))
+            # Add it back at the front
+            redis_client.lpush(self.key, json.dumps(entry.to_dict()))
+            # Reset expiration
+            redis_client.expire(self.key, self.ttl)
+        except Exception:
+            # Entry might not exist, that's okay
+            pass
     
     def clear(self) -> None:
-        self._cache.clear()
+        redis_client.delete(self.key)
     
     def __len__(self) -> int:
-        return len(self._cache)
+        return redis_client.llen(self.key)
+    
+# At the bottom of html_cache.py, remove the singleton but keep the HTML:
 
-
-# Singleton instance (shared everywhere)
-html_cache = HTMLCache(
-    max_size=int(os.getenv("CACHE_MAX_SIZE", 50))
-)
-
-html_cache.add("Quick Guide", '''
+WELCOME_HTML = '''
 <div class="hero-section">
-  <h1>Hi, I'm Your Name</h1>
+  <h1>Hi, I'm Ambri Ma</h1>
   <p class="tagline">Building at the intersection of ML, software, and AI applications</p>
 </div>
 
@@ -224,4 +261,4 @@ html_cache.add("Quick Guide", '''
     </button>
   </div>
 </div>
-''')
+'''

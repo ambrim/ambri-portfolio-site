@@ -1,37 +1,63 @@
 import nest_asyncio
 nest_asyncio.apply()
 
-import asyncio
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context, session
 from datetime import datetime
 import json
 import queue
 import threading
 import os
+import secrets
 from markupsafe import Markup
 
 from agents.orchestrator.orchestrator_agent import PortfolioAgentResult, create_orchestrator_agent
-from agents.orchestrator.tools.orchestrator_tools import set_progress_callback
-from utils.chat_message_store import chat_store
-from utils.html_cache import html_cache
+from agents.orchestrator.tools.orchestrator_tools import set_progress_callback, set_orchestrator_html_cache
+from utils.chat_message_store import ChatStore
+from utils.html_cache import HTMLCache
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+
 portfolio_agent = create_orchestrator_agent()
 
-progress_updates = {}
+def get_session_id():
+    """Get or create session ID"""
+    if 'session_id' not in session:
+        session['session_id'] = secrets.token_urlsafe(16)
+    return session['session_id']
+
+def get_chat_store():
+    """Get ChatStore for current session"""
+    session_id = get_session_id()
+    store = ChatStore(session_id)
+    
+    # Add welcome message if this is a new session
+    if len(store) == 0:
+        store.add(
+            "agent",
+            "Welcome to my portfolio! 👋 Ask me about projects, experience, or whatever you're curious about."
+        )
+    
+    return store
+
+def get_html_cache():
+    """Get HTMLCache for current session"""
+    from utils.html_cache import WELCOME_HTML
+    
+    session_id = get_session_id()
+    cache = HTMLCache(session_id)
+    
+    # Add welcome page if this is a new session
+    if len(cache) == 0:
+        cache.add("Quick Guide", WELCOME_HTML)
+    
+    return cache
 
 @app.route("/")
 def index():
-    return render_template(
-        "index.html",
-        current_year=datetime.now().year
-    )
-
-app = Flask(__name__)
-portfolio_agent = create_orchestrator_agent()
-
-@app.route("/")
-def index():
+    # Initialize session
+    get_session_id()
+    
     return render_template(
         "index.html",
         current_year=datetime.now().year
@@ -42,13 +68,17 @@ def handle_chat_stream():
     """Streaming endpoint that sends progress updates"""
     user_action = request.json.get("instruction", "")
     
+    chat_store = get_chat_store()
+    html_cache = get_html_cache()
+    
     progress_queue = queue.Queue()
     
     def progress_callback(message: str):
-        """Callback function that puts messages in the queue"""
         progress_queue.put({"type": "progress", "message": message})
     
     set_progress_callback(progress_callback)
+
+    set_orchestrator_html_cache(html_cache)
     
     @stream_with_context
     def generate():
@@ -63,6 +93,7 @@ def handle_chat_stream():
             error_container = {}
             
             def run_agent():
+                import asyncio
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 
@@ -92,7 +123,7 @@ def handle_chat_stream():
                         yield f"data: {json.dumps({'status': 'progress', 'message': msg['message']})}\n\n"
                 
                 except queue.Empty:
-                    yield ": heartbeat\n\n" 
+                    yield ": heartbeat\n\n"
             
             agent_thread.join()
             
@@ -135,63 +166,22 @@ def handle_chat_stream():
         finally:
             set_progress_callback(None)
     
-    return Response(generate(), mimetype='text/event-stream')
+    response = Response(generate(), mimetype='text/event-stream')
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'
+    return response
 
-@app.route("/chat", methods=["POST"])
-def handle_chat_request():
-    """Fallback non-streaming endpoint"""
-    user_action = request.json.get("instruction", "")
-    
-    chat_store.add("user", user_action)
-    
-    try:
-        result = portfolio_agent(
-            f"User chat request: {user_action}",
-            structured_output_model=PortfolioAgentResult
-        )
-        
-        portfolio_agent_response: PortfolioAgentResult = result.structured_output
-        
-        chat_message = portfolio_agent_response.chat_message
-        agent_html = portfolio_agent_response.html
-        success = portfolio_agent_response.success
-        error_message = portfolio_agent_response.error_message
-        
-        chat_store.add("agent", chat_message)
-        
-        if not success:
-            print(f"Error found: {error_message}")
-            return jsonify({
-                "success": success,
-                "chat_message": chat_message,
-            })
-        
-        safe_html = Markup(agent_html) if agent_html else ""
-        if agent_html:
-            html_cache.add(user_action, agent_html)
-        return jsonify({
-            "success": success,
-            "chat_message": chat_message,
-            "html": str(safe_html),
-            "history": chat_store.format_messages()
-        })
-    except Exception as e:
-        print(e)
-        return jsonify({
-            "success": False,
-            "chat_message": str(e),
-            "history": chat_store.format_messages()
-        })
-    
 @app.route("/chat/history", methods=["GET"])
 def get_chat_history():
+    chat_store = get_chat_store()
     return jsonify({
         "success": True,
         "entries": chat_store.format_messages()
     })
-    
+
 @app.route("/ui/history", methods=["GET"])
 def get_ui_history():
+    html_cache = get_html_cache()
     entries = []
 
     for idx, entry in enumerate(html_cache.all()):
@@ -208,22 +198,19 @@ def get_ui_history():
 
 @app.route("/ui/history/<int:entry_id>", methods=["GET"])
 def restore_ui_from_history(entry_id: int):
-    entries = html_cache.all()
+    html_cache = get_html_cache()
+    entry = html_cache.get(entry_id)
 
-    if entry_id < 0 or entry_id >= len(entries):
-        print("HTML cache entry not found")
-        return jsonify({
-            "success": False,
-        })
+    if not entry:
+        return jsonify({"success": False}), 404
 
-    entry = entries[entry_id]
     html_cache.promote(entry)
 
     return jsonify({
+        "success": True,
         "html": entry.html,
         "query": entry.query,
     })
-
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
