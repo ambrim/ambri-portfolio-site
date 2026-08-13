@@ -10,8 +10,7 @@ import os
 import secrets
 from markupsafe import Markup
 
-from agents.orchestrator.orchestrator_agent import PortfolioAgentResult, create_orchestrator_agent
-from agents.orchestrator.tools.orchestrator_tools import set_progress_callback, set_orchestrator_html_cache
+from agents.orchestrator.orchestrator_agent import PortfolioAgentResult, run_portfolio_request
 from utils.chat_message_store import ChatStore
 from utils.html_cache import HTMLCache
 
@@ -71,9 +70,6 @@ def handle_chat_stream():
     def progress_callback(message: str):
         progress_queue.put({"type": "progress", "message": message})
     
-    set_progress_callback(progress_callback)
-    set_orchestrator_html_cache(html_cache)
-    
     @stream_with_context
     def generate():
         try:
@@ -92,11 +88,11 @@ def handle_chat_stream():
                 asyncio.set_event_loop(loop)
                 
                 try:
-                    portfolio_agent = create_orchestrator_agent()
-                    
-                    result = portfolio_agent(
-                        f"User chat request: {user_action}",
-                        structured_output_model=PortfolioAgentResult
+                    result = run_portfolio_request(
+                        user_action,
+                        html_cache=html_cache,
+                        progress_callback=progress_callback,
+                        chat_history=chat_store.format_messages(),
                     )
                     result_container['result'] = result
                 except Exception as e:
@@ -126,7 +122,7 @@ def handle_chat_stream():
             if 'error' in error_container:
                 raise error_container['error']
             
-            portfolio_agent_response: PortfolioAgentResult = result_container['result'].structured_output
+            portfolio_agent_response: PortfolioAgentResult = result_container['result']
             
             chat_message = portfolio_agent_response.chat_message
             agent_html = portfolio_agent_response.html
@@ -159,8 +155,6 @@ def handle_chat_stream():
             import traceback
             traceback.print_exc()
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
-        finally:
-            set_progress_callback(None)
     
     response = Response(generate(), mimetype='text/event-stream')
     response.headers['Cache-Control'] = 'no-cache'

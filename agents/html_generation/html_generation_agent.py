@@ -1,8 +1,7 @@
-from agents.html_generation.tools.html_generation_tools import get_previous_html, validate_html
 from agents.html_generation.html_generation_system_prompt import html_prompt
 from pydantic import BaseModel, Field
 from strands import Agent
-from utils.aws_config import create_bedrock_model
+from utils.ai_config import create_model
 
 class HTMLGenerationResult(BaseModel):
     """Model that defines result of HTML generation"""
@@ -20,6 +19,6 @@ def create_html_generation_agent() -> Agent:
     return Agent(
         name="HTMLGenerationAgent",
         system_prompt=html_prompt,
-        model=create_bedrock_model(),
-        tools=[get_previous_html, validate_html]
+        model=create_model(),
+        tools=[]
     )

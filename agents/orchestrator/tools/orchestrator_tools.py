@@ -1,8 +1,7 @@
 from agents.html_generation.html_generation_agent import HTMLGenerationResult, create_html_generation_agent
-from agents.html_generation.tools.html_generation_tools import set_html_cache
+from lxml import html as lxml_html
 import json
-from strands import tool
-from utils.aws_config import kb_client_singleton
+from utils.retrieval_config import retrieval_client_singleton
 import threading
 
 _thread_local = threading.local()
@@ -15,7 +14,6 @@ def set_orchestrator_html_cache(cache):
     """Set the HTML cache for the current thread"""
     _thread_local.html_cache = cache
 
-@tool
 def generate_html_from_request(
     instruction: str,
     refine_previous: bool,
@@ -43,21 +41,16 @@ def generate_html_from_request(
     )
     
     html_generation_agent = create_html_generation_agent()
-    
-    # Set the HTML cache for the HTML generation tools
-    html_cache = get_html_cache()
-    if html_cache:
-        set_html_cache(html_cache)
-    
+
     # ----------------------------
     # Retrieve KB context if needed
     # ----------------------------
     kb_context = ""
     if requires_external_data:
         send_progress("Searching knowledge base...")
-        kb_chunks = kb_client_singleton.retrieve(query=instruction)
+        kb_chunks = retrieval_client_singleton.retrieve(query=instruction)
         send_progress(f"Found {len(kb_chunks)} relevant documents")
-        kb_context = kb_client_singleton.build_kb_context(kb_chunks)
+        kb_context = retrieval_client_singleton.build_kb_context(kb_chunks)
     
     # ----------------------------
     # Build prompt sections
@@ -116,6 +109,14 @@ def generate_html_from_request(
         })
     
     send_progress("Validating HTML...")
+    try:
+        lxml_html.fromstring(html_response.html)
+    except Exception as exc:
+        return json.dumps({
+            "success": False,
+            "error_message": f"Invalid HTML structure: {exc}"
+        })
+
     return json.dumps({
         "success": True,
         "html": html_response.html
